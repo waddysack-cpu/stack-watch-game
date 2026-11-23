@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<meta name="disabled-adaptations" content="watch">
+<title>Stack</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden;
+    -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+(function () {
+  const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+  let W, H, S, BH;
+  function resize() {
+    const d = window.devicePixelRatio || 1;
+    W = innerWidth; H = innerHeight; S = Math.min(W, H);
+    cv.width = W * d; cv.height = H * d; ctx.setTransform(d, 0, 0, d, 0, 0);
+    BH = H / 13;
+  }
+  addEventListener('resize', resize); resize();
+
+  let best = 0; try { best = +localStorage.getItem('stackBest') || 0; } catch (e) {}
+  let state = 'menu', stack, cur, speed, cam, camT, falling, perfect, overT, last;
+
+  function start() {
+    // positions stored as fractions of width so resizing is harmless
+    stack = [{ x: 0.2, w: 0.6 }];
+    speed = 0.55; cam = 0; camT = 0; falling = []; perfect = 0;
+    spawn(); state = 'play';
+  }
+  function spawn() {
+    const top = stack[stack.length - 1];
+    const fromLeft = stack.length % 2 === 0;
+    cur = { x: fromLeft ? -top.w : 1, w: top.w, dir: fromLeft ? 1 : -1 };
+  }
+  function drop() {
+    const top = stack[stack.length - 1];
+    const l = Math.max(cur.x, top.x), r = Math.min(cur.x + cur.w, top.x + top.w);
+    if (r - l <= 0) {
+      falling.push({ x: cur.x, w: cur.w, y: stack.length, vy: 0 });
+      return gameOver();
+    }
+    if (Math.abs(cur.x - top.x) < 0.015) {           // perfect drop: keep full width
+      stack.push({ x: top.x, w: top.w }); perfect = 0.5;
+    } else {
+      stack.push({ x: l, w: r - l });
+      const cutX = cur.x < top.x ? cur.x : r;
+      falling.push({ x: cutX, w: cur.w - (r - l), y: stack.length - 1, vy: 0 });
+    }
+    speed = Math.min(1.4, speed + 0.03);
+    camT = Math.max(0, (stack.length + 1) * BH - H * 0.55);
+    spawn();
+  }
+  function gameOver() {
+    state = 'over'; overT = 0.6;
+    const sc = stack.length - 1;
+    if (sc > best) { best = sc; try { localStorage.setItem('stackBest', best); } catch (e) {} }
+    if (navigator.vibrate) try { navigator.vibrate(80); } catch (e) {}
+  }
+  function tap(e) {
+    if (e) e.preventDefault();
+    if (state === 'play') drop();
+    else if (state === 'menu' || overT <= 0) start();
+  }
+  cv.addEventListener('touchstart', tap, { passive: false });
+  cv.addEventListener('mousedown', tap);
+  addEventListener('keydown', e => { if (e.code === 'Space') tap(e); });
+
+  function update(dt) {
+    if (state === 'over') overT -= dt;
+    if (state === 'menu') return;
+    if (state === 'play') {
+      cur.x += cur.dir * speed * dt;
+      if (cur.x > 1.05) cur.dir = -1;
+      if (cur.x + cur.w < -0.05) cur.dir = 1;
+    }
+    cam += (camT - cam) * Math.min(1, dt * 6);
+    falling.forEach(f => { f.vy += 30 * dt; f.y -= f.vy * dt; });
+    falling = falling.filter(f => f.y > -40);
+    if (perfect > 0) perfect -= dt;
+  }
+
+  function block(i, x, w, yIdx) {
+    const y = H - (yIdx + 1) * BH + cam;
+    ctx.fillStyle = 'hsl(' + ((i * 14 + 180) % 360) + ',70%,55%)';
+    ctx.fillRect(x * W, y, w * W, BH - 1);
+  }
+  function text(t, y, size, color) {
+    ctx.fillStyle = color; ctx.font = '600 ' + size + 'px -apple-system, system-ui, sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(t, W / 2, y);
+  }
+
+  function draw() {
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+    if (state === 'menu') {
+      text('STACK', H * 0.38, S * 0.16, '#fff');
+      text('tap to start', H * 0.55, S * 0.07, '#8f8');
+      text('tap = drop block', H * 0.65, S * 0.055, '#666');
+      return;
+    }
+    stack.forEach((b, i) => block(i, b.x, b.w, i));
+    falling.forEach(f => block(f.y | 0, f.x, f.w, f.y));
+    if (state === 'play') block(stack.length, cur.x, cur.w, stack.length);
+    text(String(stack.length - 1), H * 0.12, S * 0.14, '#fff');
+    if (perfect > 0) text('PERFECT', H * 0.24, S * 0.07, '#ffd60a');
+    if (state === 'over') {
+      ctx.fillStyle = 'rgba(0,0,0,0.65)'; ctx.fillRect(0, 0, W, H);
+      text('GAME OVER', H * 0.33, S * 0.1, '#ff453a');
+      text(String(stack.length - 1), H * 0.48, S * 0.17, '#fff');
+      text('best ' + best, H * 0.61, S * 0.06, '#aaa');
+      if (overT <= 0) text('tap to retry', H * 0.72, S * 0.055, '#8f8');
+    }
+  }
+  function loop(t) {
+    const dt = last ? Math.min(0.05, (t - last) / 1000) : 0; last = t;
+    update(dt); draw(); requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
