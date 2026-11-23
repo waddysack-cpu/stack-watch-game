@@ -27,11 +27,16 @@
 
   let best = 0; try { best = +localStorage.getItem('stackBest') || 0; } catch (e) {}
   let state = 'menu', stack, cur, speed, cam, camT, falling, perfect, overT, last;
+  // perfect streak: from the 3rd perfect in a row, each perfect regrows the block
+  // a little, up to the width you had before your last cut
+  const STREAK_NEEDED = 3, REGROW = 0.03;
+  let streak, regainCap, grew;
 
   function start() {
     // positions stored as fractions of width so resizing is harmless
     stack = [{ x: 0.2, w: 0.6 }];
     speed = 0.55; cam = 0; camT = 0; falling = []; perfect = 0;
+    streak = 0; regainCap = 0.6; grew = 0;
     spawn(); state = 'play';
   }
   function spawn() {
@@ -47,13 +52,21 @@
       return gameOver();
     }
     if (Math.abs(cur.x - top.x) < 0.015) {           // perfect drop: keep full width
-      stack.push({ x: top.x, w: top.w }); perfect = 0.5;
+      streak++; perfect = 0.6;
+      let x = top.x, w = top.w;
+      if (streak >= STREAK_NEEDED && w < regainCap) {
+        const nw = Math.min(regainCap, w + REGROW);
+        x = Math.max(0, Math.min(1 - nw, x - (nw - w) / 2));
+        w = nw; grew = 0.6;
+      }
+      stack.push({ x, w });
     } else {
+      streak = 0; regainCap = top.w;                  // can regrow back to this
       stack.push({ x: l, w: r - l });
       const cutX = cur.x < top.x ? cur.x : r;
       falling.push({ x: cutX, w: cur.w - (r - l), y: stack.length - 1, vy: 0 });
     }
-    speed = Math.min(1.4, speed + 0.03);
+    speed = Math.min(1.4, speed + 0.015);
     camT = Math.max(0, (stack.length + 1) * BH - H * 0.55);
     spawn();
   }
@@ -84,6 +97,7 @@
     falling.forEach(f => { f.vy += 30 * dt; f.y -= f.vy * dt; });
     falling = falling.filter(f => f.y > -40);
     if (perfect > 0) perfect -= dt;
+    if (grew > 0) grew -= dt;
   }
 
   function block(i, x, w, yIdx) {
@@ -108,7 +122,8 @@
     falling.forEach(f => block(f.y | 0, f.x, f.w, f.y));
     if (state === 'play') block(stack.length, cur.x, cur.w, stack.length);
     text(String(stack.length - 1), H * 0.12, S * 0.14, '#fff');
-    if (perfect > 0) text('PERFECT', H * 0.24, S * 0.07, '#ffd60a');
+    if (perfect > 0) text(streak > 1 ? 'PERFECT x' + streak : 'PERFECT', H * 0.24, S * 0.07, '#ffd60a');
+    if (grew > 0) text('+ GROW', H * 0.32, S * 0.06, '#30d158');
     if (state === 'over') {
       ctx.fillStyle = 'rgba(0,0,0,0.65)'; ctx.fillRect(0, 0, W, H);
       text('GAME OVER', H * 0.33, S * 0.1, '#ff453a');
